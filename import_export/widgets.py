@@ -2,6 +2,7 @@ from __future__ import unicode_literals
 
 from decimal import Decimal
 from datetime import datetime
+from django.core.cache import cache
 from django.utils import datetime_safe
 
 try:
@@ -138,7 +139,30 @@ class ForeignKeyWidget(Widget):
 
     def clean(self, value):
         pk = super(ForeignKeyWidget, self).clean(value)
-        return self.model.objects.get(pk=pk) if pk else None
+
+        if pk:
+            # Create a cache key from the app label, model name, and pk
+            cache_key = '%s_%s_%s' % (
+                self.model._meta.app_label,
+                self.model._meta.module_name,
+                pk
+            )
+
+            # print 'cache', cache_key
+            obj = cache.get(cache_key)
+
+            # if there's a cached object, return it.
+            if obj:
+                return obj
+
+            # look up the object if it's not there and set it in the cache
+            obj = self.model.objects.get(pk=pk)
+            cache.set(cache_key, obj)
+
+            # return our object
+            return obj
+
+        return None
 
     def render(self, value):
         if value is None:
