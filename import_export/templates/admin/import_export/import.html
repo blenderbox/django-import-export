@@ -63,6 +63,11 @@
 
   {% if result.has_errors %}
     <h2>{% trans "Errors" %}</h2>
+
+    {% if error_msgs %}
+      {{ error_msgs }}
+    {% endif %}
+
     <ul>
       {% for error in result.base_errors  %}
       <li>{{ error.error }}</li>

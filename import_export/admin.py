@@ -1,6 +1,7 @@
 from __future__ import with_statement
 
 import tempfile
+import traceback
 from datetime import datetime
 import os.path
 
@@ -23,7 +24,7 @@ from .resources import (
     modelresource_factory,
 )
 from .formats import base_formats
-from .results import RowResult
+from .results import Error, Result, RowResult
 
 try:
     from django.utils.encoding import force_text
@@ -125,8 +126,8 @@ class ImportMixin(ImportExportMixinBase):
                 data = force_text(data, self.from_encoding)
             dataset = input_format.create_dataset(data)
 
-            result = resource.import_data(dataset, dry_run=False,
-                                 raise_errors=True)
+            result = resource.import_data(
+                dataset, dry_run=False, raise_errors=True)
 
             # Add imported objects to LogEntry
             logentry_map = {
@@ -134,7 +135,7 @@ class ImportMixin(ImportExportMixinBase):
                 RowResult.IMPORT_TYPE_UPDATE: CHANGE,
                 RowResult.IMPORT_TYPE_DELETE: DELETION,
             }
-            content_type_id=ContentType.objects.get_for_model(self.model).pk
+            content_type_id = ContentType.objects.get_for_model(self.model).pk
             for row in result:
                 LogEntry.objects.log_action(
                     user_id=request.user.pk,
@@ -142,7 +143,9 @@ class ImportMixin(ImportExportMixinBase):
                     object_id=row.object_id,
                     object_repr=row.object_repr,
                     action_flag=logentry_map[row.import_type],
-                    change_message="%s through import_export" % row.import_type,
+                    change_message="%s through import_export" % (
+                        row.import_type
+                    ),
                 )
 
             success_message = _('Import finished')
@@ -168,6 +171,7 @@ class ImportMixin(ImportExportMixinBase):
         form = ImportForm(import_formats,
                           request.POST or None,
                           request.FILES or None)
+        error_msgs = []
 
         if request.POST and form.is_valid():
             input_format = import_formats[
@@ -187,9 +191,25 @@ class ImportMixin(ImportExportMixinBase):
                 data = uploaded_import_file.read()
                 if not input_format.is_binary() and self.from_encoding:
                     data = force_text(data, self.from_encoding)
-                dataset = input_format.create_dataset(data)
-                result = resource.import_data(dataset, dry_run=True,
-                                              raise_errors=False)
+
+                try:
+                    dataset = input_format.create_dataset(data)
+                    result = resource.import_data(
+                        dataset, dry_run=True, raise_errors=False)
+                    # print dataset
+                    # print result
+                except UnicodeDecodeError as e:
+                    result = Result()
+                    row = RowResult()
+
+                    msg = self.get_unicode_decode_error(e)
+                    print msg
+
+                    error_msgs.append(msg)
+
+                    tb_info = traceback.format_exc(2)
+                    row.errors.append(Error(e, tb_info))
+                    result.rows.append(row)
 
             context['result'] = result
 
@@ -202,9 +222,19 @@ class ImportMixin(ImportExportMixinBase):
         context['form'] = form
         context['opts'] = self.model._meta
         context['fields'] = [f.column_name for f in resource.get_fields()]
+        context['error_msgs'] = error_msgs
 
         return TemplateResponse(request, [self.import_template_name],
                                 context, current_app=self.admin_site.name)
+
+    def get_unicode_decode_error(self, unicode_decode_error):
+        return "Error: {0}, object: {4}, encoding: {1} start: {2}, end: {3}"\
+            .format(
+                unicode_decode_error.reason,
+                unicode_decode_error.encoding,
+                unicode_decode_error.start,
+                unicode_decode_error.end,
+                unicode_decode_error.object)
 
 
 class ExportMixin(ImportExportMixinBase):
