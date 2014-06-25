@@ -2,7 +2,11 @@ from __future__ import unicode_literals
 
 from decimal import Decimal
 from datetime import datetime
+
+from django.conf import settings
 from django.core.cache import cache
+from django.core.exceptions import ObjectDoesNotExist
+from django.db.models.fields import FieldDoesNotExist
 from django.utils import datetime_safe
 
 try:
@@ -145,7 +149,7 @@ class ForeignKeyWidget(Widget):
             cache_key = '%s_%s_%s' % (
                 self.model._meta.app_label,
                 self.model._meta.module_name,
-                pk
+                pk.replace(" ", "")
             )
 
             # print 'cache', cache_key
@@ -155,13 +159,38 @@ class ForeignKeyWidget(Widget):
             if obj:
                 return obj
 
-            # look up the object if it's not there and set it in the cache
-            obj = self.model.objects.get(pk=pk)
+            # print 'PK: ', pk
+
+            try:
+                # pk = int(pk)
+                # look up the object if it's not there and set it in the cache
+                # print 'INT PK'
+                obj = self.model.objects.get(pk=pk)
+
+            except ValueError:
+                # print 'VALUE ERROR'
+
+                try:
+                    # print "Lookup by title!"
+                    # check for title field exist in model
+                    self.model._meta.get_field('title')
+                    obj = self.model.objects.get(title=pk)
+
+                except FieldDoesNotExist as e:
+                    # print "No title field."
+                    pass
+
+            except ObjectDoesNotExist:
+                print 'DNE', pk
+
             cache.set(cache_key, obj)
+
+            # print "FOUND: %s\n" % obj
 
             # return our object
             return obj
 
+        # print "-----------NO PK"
         return None
 
     def render(self, value):
