@@ -54,7 +54,7 @@ class ImportExportMixinBase(object):
             return (app_label, self.model._meta.module_name,)
 
 
-class ImportMixin(ImportExportMixinBase):
+class ImportMixin(ImportExportMixinBase, admin.ModelAdmin):
     """
     Import mixin.
     """
@@ -127,7 +127,7 @@ class ImportMixin(ImportExportMixinBase):
             dataset = input_format.create_dataset(data)
 
             result = resource.import_data(
-                dataset, dry_run=False, raise_errors=True)
+                dataset, dry_run=False, raise_errors=False)
 
             # Add imported objects to LogEntry
             logentry_map = {
@@ -136,17 +136,29 @@ class ImportMixin(ImportExportMixinBase):
                 RowResult.IMPORT_TYPE_DELETE: DELETION,
             }
             content_type_id = ContentType.objects.get_for_model(self.model).pk
+            errorz = []
             for row in result:
-                LogEntry.objects.log_action(
-                    user_id=request.user.pk,
-                    content_type_id=content_type_id,
-                    object_id=row.object_id,
-                    object_repr=row.object_repr,
-                    action_flag=logentry_map[row.import_type],
-                    change_message="%s through import_export" % (
-                        row.import_type
-                    ),
-                )
+                if len(row.errors) == 0:
+                    LogEntry.objects.log_action(
+                        user_id=request.user.pk,
+                        content_type_id=content_type_id,
+                        object_id=row.object_id,
+                        object_repr=row.object_repr,
+                        action_flag=logentry_map[row.import_type],
+                        change_message="%s through import_export" % (
+                            row.import_type
+                        ),
+                    )
+                else:
+                    if row.errors[0].error.reason.errno == 101:
+                        errorz += """Google/Bing is taking too long to respond,
+                        so I can't geocode the locations. please try again later."""
+                    else:
+                        errorz += row.errors[0].error.reason
+
+            if not len(errorz) == 0:
+                self.message_user(request, ''.join(map(str, errorz)), level=messages.ERROR)
+                return HttpResponseRedirect(request.META.get('HTTP_REFERER', '/manage'))
 
             success_message = _('Import finished')
             messages.success(request, success_message)
